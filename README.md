@@ -54,12 +54,12 @@ Include the one header and link the library:
 ```c
 #include "ipt.h"
 
-ipt_classifier* clf = ipt_create("model.ts", IPT_DEVICE_CPU, -60.0, 20);
+ipt_classifier* clf = ipt_create("model.ts", IPT_DEVICE_CPU, -60.0, 20); //path to model, device, threshold in dB, window in ms
 ipt_initialize_model(clf);          // load TorchScript (same thread as process)
 ipt_init_buffers(clf, 48000, 512);  // sample rate + audio block size
 
 float dist[256]; double latency;
-int n = ipt_process(clf, samples, num_samples, dist, 256, &latency);
+int n = ipt_process(clf, samples, num_samples, dist, 256, &latency); // classifier, samples block, sample count, out distribution buffer, its capacity, latency pointer
 // n > 0  -> dist[] holds the per-class probability distribution
 // n == 0 -> no classification this block (buffering / silence)
 // n < 0  -> error, see ipt_last_error()
@@ -100,6 +100,6 @@ python tools/make_dummy_model.py tests/dummy.ts
 
 See [`include/ipt.h`](include/ipt.h), every function is documented there.
 
-### Licence
+## Licence
 
 > libipt is distributed under CC BY-NC 4.0, inherited from ipt_tilde, which it incorporates. Commercial use is not permitted. (The wrapper code in include/, src/, examples/ is additionally available under MIT, but the built library as a whole remains CC BY-NC 4.0.)
