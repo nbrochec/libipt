@@ -1,5 +1,7 @@
 # libipt
 
+[![CI](https://github.com/nbrochec/libipt/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/nbrochec/libipt/actions/workflows/ci.yml)
+
 A C API for real-time **Instrumental Playing Technique (IPT)** classification.
 
 **Disclaimer: Part of this code was written with Claude Opus 4.8.**
