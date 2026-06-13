@@ -8,15 +8,11 @@ A C API for real-time **Instrumental Playing Technique (IPT)** classification.
 Claude code was utilized for faster implementation of the API. The code has been reviewed and validated by a human before making it available online.
 
 `libipt` is a thin C ABI wrapper around the inference core of
-[`ipt_tilde`](https://github.com/DYCI2/ipt_tilde) (the `IptClassifier` engine:
-TorchScript model loading → resampling buffer → energy gating → softmax →
-optional temporal smoothing). It lets **any** native project — a Pd external, a
+[`ipt_tilde`](https://github.com/DYCI2/ipt_tilde) (`IptClassifier` routine:
+TorchScript model loading → resampling buffer → energy gating → softmax → temporal smoothing). It lets **any** native project, a Pd external, a
 SuperCollider UGen, a VST/AU plugin, a VAMP plugin, a CLI tool, or another C/C++
-app — reuse the exact same classifier without reimplementing the pipeline or
+app, reuse the exact same classifier without reimplementing the pipeline or
 touching C++/torch.
-
-The core sources are **reused, not copied**, from a sibling `ipt_tilde` checkout
-— there is a single source of truth.
 
 ## Layout
 
@@ -78,8 +74,7 @@ ipt_destroy(clf);
 `libipt.dylib` depends on the libtorch dylibs. The build bakes an rpath to
 `ipt_tilde`'s libtorch so the example runs in place. To **ship** libipt in
 another app, copy the torch dylibs (`libtorch_cpu.dylib`, `libc10.dylib`, …)
-next to your binary and set the rpath accordingly — the same approach
-`ipt_tilde`'s `pipo.ipt` uses when it bundles torch into the `.mxo`.
+next to your binary and set the rpath accordingly.
 
 ## Testing
 
@@ -87,8 +82,8 @@ next to your binary and set the rpath accordingly — the same approach
 CI and local smoke tests — `sr=24000`, `segment_length=12000`, 4 classes
 (`pizzicato`, `arco`, `col_legno`, `sul_ponticello`). It implements the model
 contract libipt expects (`forward`, `get_sr`, `get_seglen`, `get_classnames`)
-but its weights are random — it only proves the C ABI / torch chain loads and
-classifies end to end, not anything musical.
+but its weights are random, it only proves the C ABI / torch chain loads and
+classifies end to end.
 
 ```bash
 ./build/example tests/dummy.ts      # should print "model loaded: 4 classes" + per-frame classes
