@@ -22,9 +22,11 @@ The core sources are **reused, not copied**, from a sibling `ipt_tilde` checkout
 
 ```
 libipt/
-├── include/ipt.h     # the entire public API (one header)
-├── src/ipt.cpp       # C ABI implementation over IptClassifier
-├── examples/example.c# minimal C consumer
+├── include/ipt.h            # the entire public API (one header)
+├── src/ipt.cpp              # C ABI implementation over IptClassifier
+├── examples/example.c       # minimal C consumer
+├── tools/make_dummy_model.py# generates the dummy TorchScript test model
+├── tests/dummy.ts           # tiny TorchScript model used by CI (4 classes)
 └── CMakeLists.txt
 ```
 
@@ -78,6 +80,26 @@ ipt_destroy(clf);
 another app, copy the torch dylibs (`libtorch_cpu.dylib`, `libc10.dylib`, …)
 next to your binary and set the rpath accordingly — the same approach
 `ipt_tilde`'s `pipo.ipt` uses when it bundles torch into the `.mxo`.
+
+## Testing
+
+[`tests/dummy.ts`](tests/dummy.ts) is a tiny TorchScript model committed for
+CI and local smoke tests — `sr=24000`, `segment_length=12000`, 4 classes
+(`pizzicato`, `arco`, `col_legno`, `sul_ponticello`). It implements the model
+contract libipt expects (`forward`, `get_sr`, `get_seglen`, `get_classnames`)
+but its weights are random — it only proves the C ABI / torch chain loads and
+classifies end to end, not anything musical.
+
+```bash
+./build/example tests/dummy.ts      # should print "model loaded: 4 classes" + per-frame classes
+bash .github/scripts/smoke.sh       # the exact check CI runs
+```
+
+Regenerate it (needs a torch matching the linked libtorch, 2.4.x):
+
+```bash
+python tools/make_dummy_model.py tests/dummy.ts
+```
 
 ## API reference
 
