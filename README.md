@@ -3,6 +3,7 @@
 A C API for real-time **Instrumental Playing Technique (IPT)** classification.
 
 **Disclaimer: Part of this code was written with Claude Opus 4.8.**
+Claude code was utilized for faster implementation of the API. The code has been reviewed and validated by a human before making it available online.
 
 `libipt` is a thin C ABI wrapper around the inference core of
 [`ipt_tilde`](https://github.com/DYCI2/ipt_tilde) (the `IptClassifier` engine:
