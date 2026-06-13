@@ -98,4 +98,8 @@ python tools/make_dummy_model.py tests/dummy.ts
 
 ## API reference
 
-See [`include/ipt.h`](include/ipt.h) — every function is documented there.
+See [`include/ipt.h`](include/ipt.h), every function is documented there.
+
+### Licence
+
+> libipt is distributed under CC BY-NC 4.0, inherited from ipt_tilde, which it incorporates. Commercial use is not permitted. (The wrapper code in include/, src/, examples/ is additionally available under MIT, but the built library as a whole remains CC BY-NC 4.0.)
