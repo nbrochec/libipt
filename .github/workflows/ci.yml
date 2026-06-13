@@ -1,0 +1,89 @@
+name: CI
+
+# libipt is a thin wrapper around the ipt_tilde core. Two robots run here:
+#
+#   * On your pushes / PRs: build the version of ipt_tilde you officially support
+#     and make sure libipt still builds and links.
+#
+#   * Once a day on its own: fetch the LATEST code from ipt_tilde's main branch
+#     online and try to build against it. If ipt_tilde changed something that
+#     breaks the wrapper, this job goes red and GitHub emails you — so you find
+#     out the wrapper needs updating without having to watch ipt_tilde yourself.
+#     (GitHub can't trigger this the instant ipt_tilde is pushed, so it checks in
+#     daily instead.)
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  schedule:
+    - cron: "0 6 * * *"   # every day at 06:00 UTC — check in on ipt_tilde's main branch
+  workflow_dispatch:        # lets you run it by hand from the Actions tab
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # The public header must stay clean as both C and C++. Fast, needs nothing.
+  # ---------------------------------------------------------------------------
+  header:
+    name: public header is clean (C / C++)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: syntax-check include/ipt.h
+        run: |
+          set -euxo pipefail
+          gcc -std=c11   -x c   -fsyntax-only -Wall -Wextra -Werror include/ipt.h
+          g++ -std=c++17 -x c++ -fsyntax-only -Wall -Wextra -Werror include/ipt.h
+
+  # ---------------------------------------------------------------------------
+  # Build the version of ipt_tilde libipt officially supports (the pin in
+  # CMakeLists.txt). Runs on your pushes and pull requests. Must pass.
+  # ---------------------------------------------------------------------------
+  build:
+    name: build & link (supported ipt_tilde)
+    if: github.event_name != 'schedule'
+    runs-on: macos-14            # Apple Silicon — the only supported target
+    steps:
+      - uses: actions/checkout@v4
+      - name: build from scratch (CMake fetches ipt_tilde + libtorch)
+        run: |
+          set -eux
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build -j 8
+      - name: check the library and demo were produced
+        run: |
+          set -eux
+          test -f build/libipt.dylib
+          test -x build/example
+      - name: runtime check — the library actually loads
+        run: bash .github/scripts/smoke.sh
+
+  # ---------------------------------------------------------------------------
+  # The daily "check-in" on ipt_tilde's main branch. Builds against the LATEST
+  # ipt_tilde code online. If it breaks, this job fails (red) and GitHub emails
+  # you. Runs only on the schedule and when you click "Run workflow".
+  # ---------------------------------------------------------------------------
+  watch-ipt-tilde:
+    name: build against latest ipt_tilde (main branch)
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: show which ipt_tilde commit we're testing against
+        run: |
+          set -eux
+          git ls-remote https://github.com/DYCI2/ipt_tilde.git refs/heads/main
+      - name: build against ipt_tilde's main branch
+        run: |
+          set -eux
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DIPT_TILDE_GIT_TAG=main
+          cmake --build build -j 8
+      - name: runtime check — the library actually loads
+        run: bash .github/scripts/smoke.sh
