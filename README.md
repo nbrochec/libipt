@@ -72,14 +72,44 @@ ipt_destroy(clf);
 ### Runtime note
 
 `libipt.dylib` depends on the libtorch dylibs. The build bakes an rpath to
-`ipt_tilde`'s libtorch so the example runs in place. To **ship** libipt in
-another app, copy the torch dylibs (`libtorch_cpu.dylib`, `libc10.dylib`, …)
-next to your binary and set the rpath accordingly.
+`ipt_tilde`'s libtorch so the example runs in place — but that path is specific
+to your machine. To **ship** libipt elsewhere, use the install step below.
+
+## Distributing (self-contained bundle)
+
+`cmake --install` gathers a relocatable bundle (the header, `libipt.dylib`, and
+the libtorch dylibs it needs) into one folder you can zip and hand off:
+
+```bash
+cmake --install build            # -> ./dist  (or: --prefix /some/where)
+```
+
+```
+dist/
+├── include/ipt.h
+└── lib/
+    ├── libipt.dylib                 # rpath = @loader_path
+    ├── libtorch.dylib
+    ├── libtorch_cpu.dylib
+    └── libc10.dylib
+```
+
+`libipt.dylib` finds the torch dylibs sitting next to it (`@loader_path`), so the
+whole `lib/` folder works wherever it's copied. A
+consumer builds against it and adds an rpath to the bundle's `lib/`:
+
+```bash
+gcc myapp.c -Idist/include -Ldist/lib -lipt -Wl,-rpath,/path/to/dist/lib
+```
+
+(Or just place the binary inside `dist/lib/`.) Note: the default `dist` prefix
+only applies on a build tree already configured with
+another prefix, pass `--prefix` explicitly.
 
 ## Testing
 
 [`tests/dummy.ts`](tests/dummy.ts) is a tiny TorchScript model committed for
-CI and local smoke tests — `sr=24000`, `segment_length=12000`, 4 classes
+CI and local smoke tests; `sr=24000`, `segment_length=12000`, 4 classes
 (`pizzicato`, `arco`, `col_legno`, `sul_ponticello`). It implements the model
 contract libipt expects (`forward`, `get_sr`, `get_seglen`, `get_classnames`)
 but its weights are random, it only proves the C ABI / torch chain loads and
