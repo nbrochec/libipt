@@ -97,6 +97,7 @@ int ipt_process(ipt_classifier* h,
 /*
  * Optional temporal smoothing of the output distribution (leaky integrator).
  * tau_ms is the time constant in milliseconds; 0 disables smoothing (default).
+ * In the Max object: tau_ms = (1 - sensitivity) * range_ms where sensitivity [0,1] and range_ms [0,2000].
  */
 void ipt_set_smoothing_tau(ipt_classifier* h, double tau_ms);
 
