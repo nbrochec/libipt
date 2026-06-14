@@ -94,8 +94,11 @@ add_subdirectory("${IPT_TILDE_DIR}/src"          "${CMAKE_BINARY_DIR}/ipt_core")
 add_library(ipt_api SHARED src/ipt.cpp)
 set_target_properties(ipt_api PROPERTIES
     OUTPUT_NAME ipt          # produces libipt.dylib
+    # For the in-tree build, find libtorch at its absolute location so build/example
+    # runs without an install step. For the installed copy, look right next to
+    # libipt.dylib (@loader_path) — the bundled torch dylibs are copied alongside it.
     BUILD_RPATH   "${TORCH_LIB_DIR}"
-    INSTALL_RPATH "${TORCH_LIB_DIR}")
+    INSTALL_RPATH "@loader_path")
 target_include_directories(ipt_api PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
 target_link_libraries(ipt_api PRIVATE ipt)   # `ipt` brings in src/ headers + r8brain + torch
 
@@ -104,3 +107,35 @@ target_link_libraries(ipt_api PRIVATE ipt)   # `ipt` brings in src/ headers + r8
 # --------------------------------------------------------------------------------------
 add_executable(example examples/example.c)
 target_link_libraries(example PRIVATE ipt_api)
+
+# --------------------------------------------------------------------------------------
+# install / dist — a self-contained, relocatable bundle for external consumers:
+#
+#     cmake --install build            # -> <source>/dist by default
+#     cmake --install build --prefix /somewhere/else
+#
+# Produces:
+#     <prefix>/include/ipt.h
+#     <prefix>/lib/libipt.dylib                       (rpath = @loader_path)
+#     <prefix>/lib/libtorch.dylib, libtorch_cpu.dylib, libc10.dylib
+#
+# A consumer compiles with  -I<prefix>/include -L<prefix>/lib -lipt  and, at run
+# time, only needs libipt.dylib to find the torch dylibs sitting next to it
+# (they already carry @loader_path), so the whole lib/ folder is relocatable.
+# --------------------------------------------------------------------------------------
+if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
+    set(CMAKE_INSTALL_PREFIX "${CMAKE_SOURCE_DIR}/dist" CACHE PATH "libipt dist prefix" FORCE)
+endif()
+
+# Public header + the C ABI shared library.
+install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/include/ipt.h" DESTINATION include)
+install(TARGETS ipt_api LIBRARY DESTINATION lib)
+
+# The libtorch runtime closure libipt links against (CPU build: no libomp — uses
+# Accelerate). These already reference each other via @rpath/@loader_path, so
+# co-locating them in lib/ is enough.
+install(FILES
+    "${TORCH_LIB_DIR}/libtorch.dylib"
+    "${TORCH_LIB_DIR}/libtorch_cpu.dylib"
+    "${TORCH_LIB_DIR}/libc10.dylib"
+    DESTINATION lib)
