@@ -43,7 +43,7 @@ int main(int argc, char** argv) {
 
     /* 3. processing loop — feed mono audio blocks, read classifications */
     double buf[512];
-    float  dist[256];
+    float  out_dist[256];
     double latency;
     double phase = 0.0;
 
@@ -53,16 +53,16 @@ int main(int argc, char** argv) {
             phase += 2.0 * M_PI * 440.0 / (double) sr;
         }
 
-        int n = ipt_process(clf, buf, block, dist, 256, &latency);
+        int n = ipt_process(clf, buf, block, out_dist, 256, &latency);
         if (n > 0) {
             int best = 0;
             for (int i = 1; i < n; ++i) {
-                if (dist[i] > dist[best]) best = i;
+                if (out_dist[i] > out_dist[best]) best = i;
             }
             char name[128];
             ipt_get_class_name(clf, best, name, sizeof(name));
             printf("frame %4d -> %-20s p=%.3f  (%.2f ms)\n",
-                   frame, name, dist[best], latency);
+                   frame, name, out_dist[best], latency);
         } else if (n < 0) {
             fprintf(stderr, "process error: %s\n", ipt_last_error());
             break;

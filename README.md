@@ -58,9 +58,9 @@ ipt_classifier* clf = ipt_create("model.ts", IPT_DEVICE_CPU, -60.0, 20); //path 
 ipt_initialize_model(clf);          // load TorchScript (same thread as process)
 ipt_init_buffers(clf, 48000, 512);  // sample rate + audio block size
 
-float dist[256]; double latency;
-int n = ipt_process(clf, samples, num_samples, dist, 256, &latency); // classifier, samples block, sample count, out distribution buffer, its capacity, latency pointer
-// n > 0  -> dist[] holds the per-class probability distribution
+float out_dist[256]; double latency;
+int n = ipt_process(clf, samples, num_samples, out_dist, 256, &latency); // classifier, samples block, sample count, out prob distribution buffer, its capacity, latency pointer
+// n > 0  -> out_dist[] holds the per-class probability distribution
 // n == 0 -> no classification this block (buffering / silence)
 // n < 0  -> error, see ipt_last_error()
 
