@@ -1,7 +1,9 @@
 build/
+dist/
 *.dylib
 *.o
 *.a
+*.zip
 .DS_Store
 compile_commands.json
 .cache/
