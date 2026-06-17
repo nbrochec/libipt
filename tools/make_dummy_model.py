@@ -41,9 +41,9 @@ class DummyIPT(nn.Module):
         self.fc = nn.Linear(SEGMENT_LENGTH, len(CLASS_NAMES))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # x arrives as [1, 1, SEGMENT_LENGTH]; flatten to [1, SEGMENT_LENGTH]
-        x = x.reshape(1, -1)
-        return self.fc(x)  # [1, n_classes] logits; libipt softmaxes these
+        # x arrives as [BATCH, 1, SEGMENT_LENGTH]; flatten to [BATCH, SEGMENT_LENGTH]
+        x = x.reshape(x.size(0), -1)
+        return self.fc(x)  # [BATCH, n_classes] logits; libipt softmaxes these
 
     # literals are inlined below: TorchScript methods can't close over
     # Python module-level globals, so the values are baked in at script time.
