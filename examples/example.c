@@ -37,6 +37,7 @@ int main(int argc, char** argv) {
     const int block = 512;
     ipt_init_buffers(clf, sr, block);
     ipt_set_smoothing_tau(clf, 100.0);  /* optional temporal smoothing */
+    ipt_set_period(clf, 30.0); /* Set period */
 
     const int nclasses = ipt_num_classes(clf);
     printf("model loaded: %d classes\n", nclasses);
@@ -66,6 +67,46 @@ int main(int argc, char** argv) {
         } else if (n < 0) {
             fprintf(stderr, "process error: %s\n", ipt_last_error());
             break;
+        }
+    }
+
+    /* 4. Acquire windows and classify in batch */
+    printf("\nAcquiring windows and classifying in batch...\n");
+    #define MAX_BATCH 128
+    float* windows[MAX_BATCH] = {NULL};
+    int window_length = 0;
+    int batch_count = 0;
+    phase = 0.0;
+    
+    for (int frame = 0; frame < 2000 && batch_count < MAX_BATCH; ++frame) {
+        for (int i = 0; i < block; ++i) {
+            buf[i] = 0.2 * sin(phase);
+            phase += 2.0 * M_PI * 440.0 / (double) sr;
+        }
+        
+        float* window = NULL;
+        int len = ipt_acquire_window(clf, buf, block, &window);
+        if (len > 0) {
+            window_length = len;
+            windows[batch_count++] = window;
+        }
+    }
+    
+    if (batch_count > 0) {
+        printf("Acquired %d windows\n", batch_count);
+        
+        float dist[MAX_BATCH * 256];
+        double latencies[MAX_BATCH];
+        int n = ipt_classify_batch(clf, (const float* const*)windows, batch_count, 
+                                   window_length, dist, MAX_BATCH * 256, latencies);
+        if (n > 0) {
+            printf("ipt_classify_batch processed %d windows in one forward pass\n", n);
+        } else {
+            fprintf(stderr, "classify_batch error: %s\n", ipt_last_error());
+        }
+        
+        for (int i = 0; i < batch_count; i++) {
+            ipt_free_window(windows[i]);
         }
     }
 
