@@ -41,7 +41,7 @@ set(IPT_TILDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../ipt_tilde"
     CACHE PATH "Path to a local ipt_tilde checkout (provides src/, libs/r8brain, libs/libtorch)")
 set(IPT_TILDE_GIT_URL "https://github.com/DYCI2/ipt_tilde.git"
     CACHE STRING "ipt_tilde git URL used only when no local checkout is found")
-set(IPT_TILDE_GIT_TAG "v1.1.0"
+set(IPT_TILDE_GIT_TAG "main"
     CACHE STRING "ipt_tilde git tag/commit fetched when no local checkout is found")
 
 if(EXISTS "${IPT_TILDE_DIR}/src/ipt_classifier.h")
