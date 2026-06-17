@@ -21,6 +21,7 @@ struct ipt_classifier {
     IptClassifier   classifier;
     LeakyIntegrator integrator;
     double          smoothing_tau = 0.0;
+    double          period_ms = 0.0;
     std::vector<std::string> class_names;
 
     ipt_classifier(std::string path, torch::DeviceType dev, double thr_db, int win_ms)
@@ -138,6 +139,10 @@ void ipt_set_threshold_window(ipt_classifier* h, int duration_ms) {
     if (h) h->classifier.set_threshold_window(duration_ms);
 }
 
+void ipt_set_period(ipt_classifier* h, double period_ms) {
+    if (h) h->period_ms = period_ms < 0.0 ? 0.0 : period_ms;
+}
+
 int ipt_num_classes(ipt_classifier* h) {
     if (!h || h->class_names.empty()) return -1;
     return static_cast<int>(h->class_names.size());
@@ -154,6 +159,67 @@ int ipt_get_class_name(ipt_classifier* h, int index, char* out, int out_cap) {
     std::memcpy(out, s.data(), static_cast<std::size_t>(to_copy));
     out[to_copy] = '\0';
     return to_copy;
+}
+
+int ipt_acquire_window(ipt_classifier* h, const double* samples, int num_samples, float** out_window) {
+    if (!h || !samples || num_samples < 0 || !out_window) {
+        g_last_error = "ipt_acquire_window: invalid argument";
+        return IPT_ERR_INVALID_ARG;
+    }
+    try {
+        std::vector<double> in(samples, samples + num_samples);
+        auto window = h->classifier.acquire_window(std::move(in));
+        if (!window) {
+            return 0; // no window ready
+        }
+        const int length = static_cast<int>(window->size());
+        float* buf = new float[static_cast<size_t>(length)];
+        std::memcpy(buf, window->data(), static_cast<size_t>(length) * sizeof(float));
+        *out_window = buf;
+        return length;
+    } catch (const std::exception& e) {
+        g_last_error = e.what();
+        return IPT_ERR_TORCH;
+    }
+}
+
+void ipt_free_window(float* window) {
+    delete[] window;
+}
+
+int ipt_classify_batch(ipt_classifier* h, const float* const* windows, int num_windows, int window_length, float* out_dist, int out_cap, double* out_latency_ms) {
+    if (!h || !windows || num_windows <= 0 || window_length <= 0 || !out_dist || out_cap < 0) {
+        g_last_error = "ipt_classify_batch: invalid argument";
+        return IPT_ERR_INVALID_ARG;
+    }
+    try {
+        std::vector<std::vector<float>> windows_vec;
+        windows_vec.reserve(static_cast<size_t>(num_windows));
+        for (int i = 0; i < num_windows; i++) {
+            windows_vec.emplace_back(windows[i], windows[i] + window_length);
+        }
+        auto results = h->classifier.classify(windows_vec);
+        
+        const int nclasses = static_cast<int>(results.empty() ? 0 : results.front().distribution.size());
+        const int total_output = num_windows * nclasses;
+        const int to_copy = std::min(total_output, out_cap);
+        
+        for (size_t i = 0; i < static_cast<size_t>(num_windows) && i < static_cast<size_t>(results.size()); i++) {
+            const auto& dist = results[i].distribution;
+            const int dist_size = static_cast<int>(dist.size());
+            const int offset = i * nclasses;
+            for (int j = 0; j < dist_size && offset + j < out_cap; j++) {
+                out_dist[offset + j] = dist[static_cast<size_t>(j)];
+            }
+            if (out_latency_ms) {
+                out_latency_ms[i] = results[i].inference_latency_ms;
+            }
+        }
+        return static_cast<int>(results.size());
+    } catch (const std::exception& e) {
+        g_last_error = e.what();
+        return IPT_ERR_TORCH;
+    }
 }
 
 const char* ipt_last_error(void) {

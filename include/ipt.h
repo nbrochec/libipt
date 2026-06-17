@@ -104,6 +104,27 @@ void ipt_set_smoothing_tau(ipt_classifier* h, double tau_ms);
 void ipt_set_energy_threshold(ipt_classifier* h, double threshold_db);
 void ipt_set_threshold_window(ipt_classifier* h, int duration_ms);
 
+/* Set output period in ms (0 = output every inference). */
+void ipt_set_period(ipt_classifier* h, double period_ms);
+
+/*
+ * Acquire a classification window without running inference (for batched processing).
+ * Returns the number of samples in the window (>0), 0 if no window is ready, or <0 on error.
+ * The caller must free the returned window with ipt_free_window().
+ */
+int ipt_acquire_window(ipt_classifier* h, const double* samples, int num_samples, float** out_window);
+
+/* Free a window allocated by ipt_acquire_window. */
+void ipt_free_window(float* window);
+
+/*
+ * Classify a batch of windows in a single forward pass.
+ * Each window must be exactly the model's segment length samples long (use ipt_acquire_window to get correctly sized windows).
+ * Returns the number of ClassificationResult entries written to out_dist (up to num_windows),
+ * or <0 on error.
+ */
+int ipt_classify_batch(ipt_classifier* h, const float* const* windows, int num_windows, int window_length, float* out_dist, int out_cap, double* out_latency_ms);
+
 /* Number of classes the loaded model predicts, or -1 if the model isn't loaded. */
 int ipt_num_classes(ipt_classifier* h);
 
