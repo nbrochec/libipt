@@ -34,18 +34,23 @@ include(FetchContent)
 
 # --- r8brain (vendored under libs/r8brain/r8brain-free-src) ----------------------------
 # Source is committed in-tree. If it is missing (e.g. a partial checkout), fetch a pin.
-set(R8BRAIN_SRC_DIR "${CMAKE_CURRENT_SOURCE_DIR}/libs/r8brain/r8brain-free-src")
-if(NOT EXISTS "${R8BRAIN_SRC_DIR}/CDSPResampler.h")
-    message(STATUS "r8brain: vendored source not found — fetching")
-    FetchContent_Declare(r8brain_src
-        GIT_REPOSITORY "https://github.com/avaneev/r8brain-free-src.git"
-        GIT_TAG        "master"
-        GIT_SHALLOW    TRUE
-        SOURCE_DIR     "${R8BRAIN_SRC_DIR}"
-        SOURCE_SUBDIR  "_libipt_populate_only")
-    FetchContent_MakeAvailable(r8brain_src)
+set(R8BRAIN_VENDORED "${CMAKE_CURRENT_SOURCE_DIR}/libs/r8brain/r8brain-free-src")
+if(EXISTS "${R8BRAIN_VENDORED}/CDSPResampler.h")
+    message(STATUS "r8brain: using vendored source at ${R8BRAIN_VENDORED}")
+    set(R8BRAIN_SRC_DIR "${R8BRAIN_VENDORED}")
 else()
-    message(STATUS "r8brain: using vendored source at ${R8BRAIN_SRC_DIR}")
+    # URL (not GIT) fetch: no per-reconfigure "git fetch" update step, and the
+    # source lands inside build/_deps alongside its stamps — so removing libs/
+    # without removing build/ can never leave FetchContent in a half-state.
+    # Pin: later master reorganized pffft.cpp/r8bbase.cpp out of the root, which
+    # breaks the static-lib build. version-6.5 keeps them in the tree root.
+    message(STATUS "r8brain: vendored source not found — fetching version-6.5")
+    FetchContent_Declare(r8brain_src
+        URL "https://github.com/avaneev/r8brain-free-src/archive/refs/tags/version-6.5.tar.gz"
+        DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+        SOURCE_SUBDIR "_libipt_populate_only")   # populate only; we build it inline below
+    FetchContent_MakeAvailable(r8brain_src)
+    set(R8BRAIN_SRC_DIR "${r8brain_src_SOURCE_DIR}")
 endif()
 
 # --- libtorch (downloaded into libs/libtorch; gitignored) ------------------------------
@@ -53,13 +58,26 @@ set(LIBTORCH_DIR "${CMAKE_CURRENT_SOURCE_DIR}/libs/libtorch")
 set(LIBTORCH_PYTHON_VERSION "3.12")
 set(LIBTORCH_URL "https://anaconda.org/pytorch/pytorch/2.4.1/download/osx-arm64/pytorch-2.4.1-py3.12_0.tar.bz2")
 
+# Plain download+extract (not FetchContent) gated solely on the extracted dir
+# existing. FetchContent stores its "populated" stamps under build/ while the
+# payload lives in libs/ — so `rm -rf libs` without `rm -rf build` would leave a
+# stale stamp and an empty libs/libtorch. Keying purely on EXISTS makes this
+# self-healing: if the payload is gone, it is re-fetched regardless of build/.
 if(NOT EXISTS "${LIBTORCH_DIR}/lib")
     message(STATUS "libtorch not found at ${LIBTORCH_DIR} — downloading")
-    FetchContent_Declare(libtorch
-        URL ${LIBTORCH_URL}
-        SOURCE_DIR ${LIBTORCH_DIR}
-        DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
-    FetchContent_MakeAvailable(libtorch)
+    set(_libtorch_tarball "${CMAKE_BINARY_DIR}/libtorch-download.tar.bz2")
+    file(DOWNLOAD "${LIBTORCH_URL}" "${_libtorch_tarball}"
+        SHOW_PROGRESS STATUS _libtorch_dl_status)
+    list(GET _libtorch_dl_status 0 _libtorch_dl_code)
+    if(NOT _libtorch_dl_code EQUAL 0)
+        list(GET _libtorch_dl_status 1 _libtorch_dl_msg)
+        file(REMOVE "${_libtorch_tarball}")
+        message(FATAL_ERROR "libtorch download failed: ${_libtorch_dl_msg}")
+    endif()
+    # The conda tarball extracts straight to bin/ info/ lib/ (no top-level dir).
+    file(MAKE_DIRECTORY "${LIBTORCH_DIR}")
+    file(ARCHIVE_EXTRACT INPUT "${_libtorch_tarball}" DESTINATION "${LIBTORCH_DIR}")
+    file(REMOVE "${_libtorch_tarball}")
 else()
     message(STATUS "libtorch found locally at ${LIBTORCH_DIR}")
 endif()
@@ -71,7 +89,14 @@ find_package(Torch REQUIRED)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${TORCH_CXX_FLAGS}")
 
 # --- r8brain static lib ----------------------------------------------------------------
-add_subdirectory(libs/r8brain)
+# Built inline (not via add_subdirectory) so the only thing that needs to exist under
+# libs/r8brain is the fetched/vendored r8brain-free-src/ — no committed wrapper file.
+# example.cpp is the upstream demo and has its own main(); exclude it.
+file(GLOB R8BRAIN_SOURCES "${R8BRAIN_SRC_DIR}/*.cpp")
+list(REMOVE_ITEM R8BRAIN_SOURCES "${R8BRAIN_SRC_DIR}/example.cpp")
+add_library(r8brain STATIC ${R8BRAIN_SOURCES})
+# SYSTEM suppresses warnings from the vendored r8brain headers.
+target_include_directories(r8brain SYSTEM PUBLIC "${R8BRAIN_SRC_DIR}")
 
 # --------------------------------------------------------------------------------------
 # ipt_core — the C++ inference core (header-only INTERFACE lib). Private to libipt;
