@@ -28,8 +28,9 @@ extern "C" {
 typedef struct ipt_classifier ipt_classifier;
 
 typedef enum {
-    IPT_DEVICE_CPU = 0,
-    IPT_DEVICE_MPS = 1   /* Apple Metal (GPU) */
+    IPT_DEVICE_CPU  = 0,
+    IPT_DEVICE_MPS  = 1,  /* Apple Metal (GPU) */
+    IPT_DEVICE_CUDA = 2   /* NVIDIA GPU */
 } ipt_device;
 
 typedef enum {
@@ -77,8 +78,9 @@ int ipt_init_buffers(ipt_classifier* h, int sample_rate, int input_vector_length
  * Feed one block of mono audio (double samples) and, when a classification is
  * produced, receive the class probability distribution.
  *
- *   out_dist  : caller-provided buffer of out_cap floats; receives the softmax
- *               distribution (one probability per class)
+ *   out_dist  : caller-provided buffer of out_cap floats; receives the RAW
+ *               (unsmoothed) softmax distribution (one probability per class).
+ *               For temporal smoothing, pass this through ipt_smooth().
  *   out_latency_ms : optional (may be NULL); set to inference latency in ms when
  *               a classification is produced
  *
@@ -95,11 +97,37 @@ int ipt_process(ipt_classifier* h,
                 double* out_latency_ms);
 
 /*
- * Optional temporal smoothing of the output distribution (leaky integrator).
- * tau_ms is the time constant in milliseconds; 0 disables smoothing (default).
+ * Set the time constant for the leaky-integrator smoothing applied by ipt_smooth().
+ * tau_ms is in milliseconds; 0 disables smoothing (default).
  * In the Max object: tau_ms = (1 - sensitivity) * range_ms where sensitivity [0,1] and range_ms [0,2000].
  */
 void ipt_set_smoothing_tau(ipt_classifier* h, double tau_ms);
+
+/*
+ * Temporally smooth a RAW distribution (from ipt_process / ipt_classify_batch)
+ * with the leaky integrator, using the time constant set by ipt_set_smoothing_tau().
+ *
+ * The caller supplies the timestamp of the distribution so that smoothing keeps
+ * the real spacing of the audio even when results are produced in a burst:
+ *
+ *   frame_time_ms >= 0 : timestamp of this distribution in ms (e.g. the audio
+ *                        frame time). Use this for batched / offline processing
+ *                        so windows classified together still smooth as if they
+ *                        had arrived at their true times.
+ *   frame_time_ms <  0 : use the real-time wall clock (steady_clock::now), the
+ *                        natural choice for live, per-block processing.
+ *
+ *   dist    : the raw distribution, n floats
+ *   out     : caller-provided buffer of out_cap floats; receives the smoothed
+ *             distribution (may alias dist)
+ *
+ * Returns the number of values written (min(n, out_cap)), or a negative
+ * ipt_status on error. With tau == 0 this is an identity copy.
+ */
+int ipt_smooth(ipt_classifier* h,
+               const float* dist, int n,
+               double frame_time_ms,
+               float* out, int out_cap);
 
 void ipt_set_energy_threshold(ipt_classifier* h, double threshold_db);
 void ipt_set_threshold_window(ipt_classifier* h, int duration_ms);

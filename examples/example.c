@@ -45,6 +45,7 @@ int main(int argc, char** argv) {
     /* 3. processing loop — feed mono audio blocks, read classifications */
     double buf[512];
     float  out_dist[256];
+    float  smoothed[256];
     double latency;
     double phase = 0.0;
 
@@ -56,14 +57,16 @@ int main(int argc, char** argv) {
 
         int n = ipt_process(clf, buf, block, out_dist, 256, &latency);
         if (n > 0) {
+            /* smooth the raw distribution; -1 = use the live wall clock */
+            ipt_smooth(clf, out_dist, n, -1.0, smoothed, 256);
             int best = 0;
             for (int i = 1; i < n; ++i) {
-                if (out_dist[i] > out_dist[best]) best = i;
+                if (smoothed[i] > smoothed[best]) best = i;
             }
             char name[128];
             ipt_get_class_name(clf, best, name, sizeof(name));
             printf("frame %4d -> %-20s p=%.3f  (%.2f ms)\n",
-                   frame, name, out_dist[best], latency);
+                   frame, name, smoothed[best], latency);
         } else if (n < 0) {
             fprintf(stderr, "process error: %s\n", ipt_last_error());
             break;

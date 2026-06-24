@@ -7,12 +7,14 @@ A C API for real-time **Instrumental Playing Technique (IPT)** classification.
 **Disclaimer: Part of this code was written with Claude Opus 4.8.**
 Claude code was utilized for faster implementation of the API. The code has been reviewed and validated by a human before making it available online.
 
-`libipt` is a thin C ABI wrapper around the inference core of
-[`ipt_tilde`](https://github.com/DYCI2/ipt_tilde) (`IptClassifier` routine:
-TorchScript model loading → resampling buffer → energy gating → softmax → temporal smoothing). It lets **any** native project, a Pd external, a
-SuperCollider UGen, a VST/AU plugin, a VAMP plugin, a CLI tool, or another C/C++
-app, reuse the exact same classifier without reimplementing the pipeline or
-touching C++/torch.
+`libipt` is a self-contained C library for IPT classification. It **owns** the
+inference core (the `IptClassifier` routine, originally developed in
+[`ipt_tilde`](https://github.com/DYCI2/ipt_tilde): TorchScript model loading →
+resampling buffer → energy gating → softmax → temporal smoothing) and exposes it
+through a single C ABI (`ipt.h`). It lets **any** native project, a Pd external, a
+SuperCollider UGen, a VST/AU plugin, a VAMP plugin, a CLI tool, `ipt_tilde`'s own
+Max/PiPo externals, or another C/C++ app, reuse the exact same classifier without
+reimplementing the pipeline or touching C++/torch.
 
 ## Layout
 
@@ -20,6 +22,8 @@ touching C++/torch.
 libipt/
 ├── include/ipt.h            # the entire public API (one header)
 ├── src/ipt.cpp              # C ABI implementation over IptClassifier
+├── core/                    # the C++ inference core (header-only, private to libipt)
+├── libs/r8brain/            # vendored r8brain resampler
 ├── examples/example.c       # minimal C consumer
 ├── tools/make_dummy_model.py# generates the dummy TorchScript test model
 ├── tests/dummy.ts           # tiny TorchScript model used by CI (4 classes)
@@ -28,16 +32,17 @@ libipt/
 
 ## Requirements
 
-- macOS, Apple Silicon (arm64) — same constraint as `ipt_tilde`
+- macOS, Apple Silicon (arm64)
 - CMake ≥ 3.19
-- A checkout of `ipt_tilde` next to this folder (`../ipt_tilde`), or pointed to via `-DIPT_TILDE_DIR=...`.
-  libtorch is reused from `ipt_tilde/libs/libtorch` (downloaded there automatically if absent).
+- No external checkout needed — libipt is self-contained. r8brain is vendored;
+  libtorch (2.4.1) is downloaded into `libs/libtorch` automatically on first
+  configure if absent.
 
 ## Build
 
 ```bash
 cd libipt
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release        # add -DIPT_TILDE_DIR=/path/to/ipt_tilde if not a sibling
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j 8
 ```
 
@@ -72,8 +77,8 @@ ipt_destroy(clf);
 ### Runtime note
 
 `libipt.dylib` depends on the libtorch dylibs. The build bakes an rpath to
-`ipt_tilde`'s libtorch so the example runs in place — but that path is specific
-to your machine. To **ship** libipt elsewhere, use the install step below.
+libipt's own `libs/libtorch` so the example runs in place — but that path is
+specific to your machine. To **ship** libipt elsewhere, use the install step below.
 
 ## Distributing (self-contained bundle)
 

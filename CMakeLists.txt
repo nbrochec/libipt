@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.19)
 
 # Must be set BEFORE project() so the -mmacosx-version-min flag is emitted.
 # torch (conda-forge build) is arm64-only and needs an older libc++ target than
-# the host SDK — matches ipt_tilde, without it the libtorch headers fail to compile.
+# the host SDK — without it the libtorch headers fail to compile.
 set(CMAKE_OSX_ARCHITECTURES arm64 CACHE STRING "" FORCE)
 set(CMAKE_OSX_DEPLOYMENT_TARGET "10.13" CACHE STRING "Minimum macOS deployment version" FORCE)
 
@@ -25,45 +25,31 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_C_STANDARD 11)
 
-# --------------------------------------------------------------------------------------
-# Reuse the ipt_tilde inference core (src/), r8brain, and libtorch — single source
-# of truth, nothing is copied. Point IPT_TILDE_DIR at your ipt_tilde checkout.
-#
-# Local-or-fetch: if a checkout exists (a sibling ../ipt_tilde by default, or wherever
-# -DIPT_TILDE_DIR points) it is used as-is — so edits to the core flow straight through,
-# which is the co-development workflow. If none is found, a pinned snapshot is fetched
-# from GitHub, the same way libtorch is fetched below. Set IPT_TILDE_GIT_TAG to override
-# the pin. Only the r8brain submodule is pulled; the Max/pipo submodules aren't needed.
-# --------------------------------------------------------------------------------------
 include(FetchContent)
 
-set(IPT_TILDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../ipt_tilde"
-    CACHE PATH "Path to a local ipt_tilde checkout (provides src/, libs/r8brain, libs/libtorch)")
-set(IPT_TILDE_GIT_URL "https://github.com/DYCI2/ipt_tilde.git"
-    CACHE STRING "ipt_tilde git URL used only when no local checkout is found")
-set(IPT_TILDE_GIT_TAG "main"
-    CACHE STRING "ipt_tilde git tag/commit fetched when no local checkout is found")
+# --------------------------------------------------------------------------------------
+# libipt owns the IPT inference core (core/), the r8brain resampler (libs/r8brain),
+# and acquires libtorch (libs/libtorch). It depends on NOTHING outside this tree.
+# --------------------------------------------------------------------------------------
 
-if(EXISTS "${IPT_TILDE_DIR}/src/ipt_classifier.h")
-    message(STATUS "ipt_tilde: using local checkout at ${IPT_TILDE_DIR}")
-else()
-    message(STATUS "ipt_tilde: no local checkout at ${IPT_TILDE_DIR} — fetching ${IPT_TILDE_GIT_TAG}")
-    # Download only — do NOT configure ipt_tilde's own root CMakeLists; we consume its
-    # sub-targets (libs/r8brain, src/) directly below, exactly as for a local checkout.
-    # Pointing SOURCE_SUBDIR at a dir with no CMakeLists.txt makes MakeAvailable populate
-    # without calling add_subdirectory (the supported, non-deprecated download-only idiom).
-    FetchContent_Declare(ipt_tilde
-        GIT_REPOSITORY "${IPT_TILDE_GIT_URL}"
-        GIT_TAG        "${IPT_TILDE_GIT_TAG}"
-        GIT_SUBMODULES "libs/r8brain/r8brain-free-src"
+# --- r8brain (vendored under libs/r8brain/r8brain-free-src) ----------------------------
+# Source is committed in-tree. If it is missing (e.g. a partial checkout), fetch a pin.
+set(R8BRAIN_SRC_DIR "${CMAKE_CURRENT_SOURCE_DIR}/libs/r8brain/r8brain-free-src")
+if(NOT EXISTS "${R8BRAIN_SRC_DIR}/CDSPResampler.h")
+    message(STATUS "r8brain: vendored source not found — fetching")
+    FetchContent_Declare(r8brain_src
+        GIT_REPOSITORY "https://github.com/avaneev/r8brain-free-src.git"
+        GIT_TAG        "master"
         GIT_SHALLOW    TRUE
+        SOURCE_DIR     "${R8BRAIN_SRC_DIR}"
         SOURCE_SUBDIR  "_libipt_populate_only")
-    FetchContent_MakeAvailable(ipt_tilde)
-    set(IPT_TILDE_DIR "${ipt_tilde_SOURCE_DIR}" CACHE PATH "" FORCE)
+    FetchContent_MakeAvailable(r8brain_src)
+else()
+    message(STATUS "r8brain: using vendored source at ${R8BRAIN_SRC_DIR}")
 endif()
 
-# --- libtorch (reuse ipt_tilde's local copy, or download to it) ------------------------
-set(LIBTORCH_DIR "${IPT_TILDE_DIR}/libs/libtorch")
+# --- libtorch (downloaded into libs/libtorch; gitignored) ------------------------------
+set(LIBTORCH_DIR "${CMAKE_CURRENT_SOURCE_DIR}/libs/libtorch")
 set(LIBTORCH_PYTHON_VERSION "3.12")
 set(LIBTORCH_URL "https://anaconda.org/pytorch/pytorch/2.4.1/download/osx-arm64/pytorch-2.4.1-py3.12_0.tar.bz2")
 
@@ -84,12 +70,19 @@ list(APPEND CMAKE_PREFIX_PATH "${TORCH_CMAKE_DIR}")
 find_package(Torch REQUIRED)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${TORCH_CXX_FLAGS}")
 
-# --- shared core targets from ipt_tilde (r8brain static lib + `ipt` INTERFACE lib) -----
-add_subdirectory("${IPT_TILDE_DIR}/libs/r8brain" "${CMAKE_BINARY_DIR}/r8brain")
-add_subdirectory("${IPT_TILDE_DIR}/src"          "${CMAKE_BINARY_DIR}/ipt_core")
+# --- r8brain static lib ----------------------------------------------------------------
+add_subdirectory(libs/r8brain)
 
 # --------------------------------------------------------------------------------------
-# libipt — the C ABI shared library
+# ipt_core — the C++ inference core (header-only INTERFACE lib). Private to libipt;
+# only src/ipt.cpp consumes it. Consumers of the library use the C ABI (ipt.h) instead.
+# --------------------------------------------------------------------------------------
+add_library(ipt_core INTERFACE)
+target_include_directories(ipt_core INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}/core")
+target_link_libraries(ipt_core INTERFACE r8brain "${TORCH_LIBRARIES}")
+
+# --------------------------------------------------------------------------------------
+# libipt — the C ABI shared library (the one public artifact)
 # --------------------------------------------------------------------------------------
 add_library(ipt_api SHARED src/ipt.cpp)
 set_target_properties(ipt_api PROPERTIES
@@ -100,7 +93,7 @@ set_target_properties(ipt_api PROPERTIES
     BUILD_RPATH   "${TORCH_LIB_DIR}"
     INSTALL_RPATH "@loader_path")
 target_include_directories(ipt_api PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
-target_link_libraries(ipt_api PRIVATE ipt)   # `ipt` brings in src/ headers + r8brain + torch
+target_link_libraries(ipt_api PRIVATE ipt_core)
 
 # --------------------------------------------------------------------------------------
 # Example consumer — plain C, demonstrates reuse with zero C++/torch knowledge

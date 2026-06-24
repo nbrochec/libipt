@@ -1,12 +1,13 @@
 /*
  * libipt — C ABI implementation.
  *
- * Wraps the ipt_tilde inference core (IptClassifier) and translates C++/torch
- * exceptions into status codes + a thread-local error string. The core headers
- * are reused verbatim from the ipt_tilde repository (no duplication).
+ * Wraps the IPT inference core (IptClassifier) and translates C++/torch
+ * exceptions into status codes + a thread-local error string. The core lives in
+ * core/ — libipt owns it; consumers see only this C ABI (ipt.h).
  */
 #include "ipt.h"
 
+#include <chrono>
 #include <cstring>
 #include <optional>
 #include <string>
@@ -14,8 +15,8 @@
 
 #include <torch/torch.h>
 
-#include "ipt_classifier.h"   // ipt_tilde/src
-#include "leaky_integrator.h" // ipt_tilde/src
+#include "ipt_classifier.h"   // core/
+#include "leaky_integrator.h" // core/
 
 struct ipt_classifier {
     IptClassifier   classifier;
@@ -33,7 +34,11 @@ namespace {
 thread_local std::string g_last_error = "";
 
 torch::DeviceType to_device(ipt_device d) {
-    return d == IPT_DEVICE_MPS ? torch::kMPS : torch::kCPU;
+    switch (d) {
+        case IPT_DEVICE_MPS:  return torch::kMPS;
+        case IPT_DEVICE_CUDA: return torch::kCUDA;
+        default:              return torch::kCPU;
+    }
 }
 
 } // namespace
@@ -106,11 +111,9 @@ int ipt_process(ipt_classifier* h,
             return 0; // buffering or below threshold — not an error
         }
 
-        std::vector<float> dist = std::move(result->distribution);
-        if (h->smoothing_tau > 0.0) {
-            h->integrator.set_tau(h->smoothing_tau);
-            dist = h->integrator.process(dist);
-        }
+        // Return the raw (unsmoothed) distribution; callers apply temporal
+        // smoothing explicitly via ipt_smooth() so they control the timestamp.
+        const std::vector<float>& dist = result->distribution;
 
         const int n = static_cast<int>(dist.size());
         const int to_copy = n < out_cap ? n : out_cap;
@@ -129,6 +132,41 @@ int ipt_process(ipt_classifier* h,
 
 void ipt_set_smoothing_tau(ipt_classifier* h, double tau_ms) {
     if (h) h->smoothing_tau = tau_ms < 0.0 ? 0.0 : tau_ms;
+}
+
+int ipt_smooth(ipt_classifier* h,
+               const float* dist, int n,
+               double frame_time_ms,
+               float* out, int out_cap) {
+    if (!h) { g_last_error = "ipt_smooth: handle is null"; return IPT_ERR_NULL; }
+    if (!dist || n < 0 || !out || out_cap < 0) {
+        g_last_error = "ipt_smooth: invalid argument";
+        return IPT_ERR_INVALID_ARG;
+    }
+
+    h->integrator.set_tau(h->smoothing_tau);
+
+    std::vector<float> in(dist, dist + n);
+    std::vector<float> sm;
+    if (frame_time_ms < 0.0) {
+        // live, per-block processing — use the real-time clock
+        sm = h->integrator.process(in);
+    } else {
+        // batched / offline — anchor smoothing to the supplied frame time so
+        // results produced in a burst keep their true temporal spacing
+        using clock = std::chrono::steady_clock;
+        auto ts = clock::time_point{}
+                + std::chrono::duration_cast<clock::duration>(
+                      std::chrono::duration<double, std::milli>(frame_time_ms));
+        sm = h->integrator.process(in, ts);
+    }
+
+    const int to_copy = static_cast<int>(sm.size()) < out_cap
+                            ? static_cast<int>(sm.size()) : out_cap;
+    for (int i = 0; i < to_copy; ++i) {
+        out[i] = sm[static_cast<std::size_t>(i)];
+    }
+    return to_copy;
 }
 
 void ipt_set_energy_threshold(ipt_classifier* h, double threshold_db) {
