@@ -40,10 +40,15 @@ jobs:
   # pushes and pull requests. Must pass.
   # ---------------------------------------------------------------------------
   build:
-    name: build & link
-    runs-on: macos-14            # Apple Silicon — the only supported target
+    name: build & link (macOS arm64)
+    runs-on: macos-14            # Apple Silicon
     steps:
       - uses: actions/checkout@v4
+      - name: cache libtorch
+        uses: actions/cache@v4
+        with:
+          path: libs/libtorch
+          key: libtorch-2.4.1-osx-arm64
       - name: build from scratch (CMake fetches libtorch)
         run: |
           set -eux
@@ -56,3 +61,39 @@ jobs:
           test -x build/example
       - name: runtime check — the library actually loads
         run: bash .github/scripts/smoke.sh
+
+  # ---------------------------------------------------------------------------
+  # Same build against the official MSVC libtorch (same 2.4.1 CPU version, so
+  # TorchScript models are interchangeable across platforms). Produces ipt.dll
+  # + ipt.lib; the example runs with the torch DLL closure copied beside it.
+  # ---------------------------------------------------------------------------
+  build-windows:
+    name: build & link (Windows x64)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: cache libtorch
+        uses: actions/cache@v4
+        with:
+          path: libs/libtorch
+          key: libtorch-2.4.1-win-x64
+      - name: build from scratch (CMake fetches libtorch)
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --config Release -j 4
+      - name: check the library and demo were produced
+        shell: bash
+        run: |
+          set -eux
+          test -f build/Release/ipt.dll
+          test -f build/Release/ipt.lib
+          test -x build/Release/example.exe
+      - name: runtime check — classify the dummy model through the C ABI
+        shell: bash
+        run: |
+          set -uo pipefail
+          out="$(./build/Release/example.exe tests/dummy.ts 2>&1 || true)"
+          echo "$out"
+          grep -qiE "model loaded: 4 classes" <<<"$out"
+          grep -qiE "pizzicato|arco|col_legno|sul_ponticello" <<<"$out"
+          echo "runtime check OK"

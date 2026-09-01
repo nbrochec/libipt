@@ -20,6 +20,22 @@
 #ifndef IPT_H
 #define IPT_H
 
+/*
+ * Export macro. IPT_BUILD is defined only while compiling libipt itself, so
+ * symbols are exported from the DLL/dylib and imported by Windows consumers.
+ * On non-Windows platforms it pins default visibility, keeping the C ABI
+ * stable even if the library is later built with -fvisibility=hidden.
+ */
+#if defined(_WIN32)
+#  if defined(IPT_BUILD)
+#    define IPT_API __declspec(dllexport)
+#  else
+#    define IPT_API __declspec(dllimport)
+#  endif
+#else
+#  define IPT_API __attribute__((visibility("default")))
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -50,20 +66,20 @@ typedef enum {
  *                         (e.g. -60.0; <= -80.0 disables the gate)
  *   threshold_window_ms : window length used for the silence/onset gate (e.g. 20)
  */
-ipt_classifier* ipt_create(const char* model_path,
+IPT_API ipt_classifier* ipt_create(const char* model_path,
                            ipt_device device,
                            double energy_threshold_db,
                            int threshold_window_ms);
 
 /* Free a classifier. Safe to call with NULL. */
-void ipt_destroy(ipt_classifier* h);
+IPT_API void ipt_destroy(ipt_classifier* h);
 
 /*
  * Load the TorchScript model and parse its embedded metadata (sample rate,
  * segment length, class names). Must run on the same thread as ipt_process().
  * Returns IPT_OK or IPT_ERR_TORCH (see ipt_last_error).
  */
-int ipt_initialize_model(ipt_classifier* h);
+IPT_API int ipt_initialize_model(ipt_classifier* h);
 
 /*
  * (Re)allocate the internal buffers. Call after ipt_initialize_model(), and
@@ -72,7 +88,7 @@ int ipt_initialize_model(ipt_classifier* h);
  *   input_vector_length : audio block size per ipt_process() call (an upper
  *                         bound is fine; larger blocks are handled internally)
  */
-int ipt_init_buffers(ipt_classifier* h, int sample_rate, int input_vector_length);
+IPT_API int ipt_init_buffers(ipt_classifier* h, int sample_rate, int input_vector_length);
 
 /*
  * Feed one block of mono audio (double samples) and, when a classification is
@@ -91,7 +107,7 @@ int ipt_init_buffers(ipt_classifier* h, int sample_rate, int input_vector_length
  *      0  no classification this call (still buffering, or below energy threshold)
  *    < 0  error (an ipt_status value; see ipt_last_error)
  */
-int ipt_process(ipt_classifier* h,
+IPT_API int ipt_process(ipt_classifier* h,
                 const double* samples, int num_samples,
                 float* out_dist, int out_cap,
                 double* out_latency_ms);
@@ -101,7 +117,7 @@ int ipt_process(ipt_classifier* h,
  * tau_ms is in milliseconds; 0 disables smoothing (default).
  * In the Max object: tau_ms = (1 - sensitivity) * range_ms where sensitivity [0,1] and range_ms [0,2000].
  */
-void ipt_set_smoothing_tau(ipt_classifier* h, double tau_ms);
+IPT_API void ipt_set_smoothing_tau(ipt_classifier* h, double tau_ms);
 
 /*
  * Temporally smooth a RAW distribution (from ipt_process / ipt_classify_batch)
@@ -124,26 +140,26 @@ void ipt_set_smoothing_tau(ipt_classifier* h, double tau_ms);
  * Returns the number of values written (min(n, out_cap)), or a negative
  * ipt_status on error. With tau == 0 this is an identity copy.
  */
-int ipt_smooth(ipt_classifier* h,
+IPT_API int ipt_smooth(ipt_classifier* h,
                const float* dist, int n,
                double frame_time_ms,
                float* out, int out_cap);
 
-void ipt_set_energy_threshold(ipt_classifier* h, double threshold_db);
-void ipt_set_threshold_window(ipt_classifier* h, int duration_ms);
+IPT_API void ipt_set_energy_threshold(ipt_classifier* h, double threshold_db);
+IPT_API void ipt_set_threshold_window(ipt_classifier* h, int duration_ms);
 
 /* Set output period in ms (0 = output every inference). */
-void ipt_set_period(ipt_classifier* h, double period_ms);
+IPT_API void ipt_set_period(ipt_classifier* h, double period_ms);
 
 /*
  * Acquire a classification window without running inference (for batched processing).
  * Returns the number of samples in the window (>0), 0 if no window is ready, or <0 on error.
  * The caller must free the returned window with ipt_free_window().
  */
-int ipt_acquire_window(ipt_classifier* h, const double* samples, int num_samples, float** out_window);
+IPT_API int ipt_acquire_window(ipt_classifier* h, const double* samples, int num_samples, float** out_window);
 
 /* Free a window allocated by ipt_acquire_window. */
-void ipt_free_window(float* window);
+IPT_API void ipt_free_window(float* window);
 
 /*
  * Classify a batch of windows in a single forward pass.
@@ -151,19 +167,19 @@ void ipt_free_window(float* window);
  * Returns the number of ClassificationResult entries written to out_dist (up to num_windows),
  * or <0 on error.
  */
-int ipt_classify_batch(ipt_classifier* h, const float* const* windows, int num_windows, int window_length, float* out_dist, int out_cap, double* out_latency_ms);
+IPT_API int ipt_classify_batch(ipt_classifier* h, const float* const* windows, int num_windows, int window_length, float* out_dist, int out_cap, double* out_latency_ms);
 
 /* Number of classes the loaded model predicts, or -1 if the model isn't loaded. */
-int ipt_num_classes(ipt_classifier* h);
+IPT_API int ipt_num_classes(ipt_classifier* h);
 
 /*
  * Copy class name [index] into out as a NUL-terminated string (truncated to
  * out_cap). Returns the number of characters written, or -1 on error.
  */
-int ipt_get_class_name(ipt_classifier* h, int index, char* out, int out_cap);
+IPT_API int ipt_get_class_name(ipt_classifier* h, int index, char* out, int out_cap);
 
 /* Human-readable description of the last error on the calling thread. Never NULL. */
-const char* ipt_last_error(void);
+IPT_API const char* ipt_last_error(void);
 
 #ifdef __cplusplus
 } /* extern "C" */
