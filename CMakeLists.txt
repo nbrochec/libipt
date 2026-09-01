@@ -104,8 +104,11 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${TORCH_CXX_FLAGS}")
 
 if(MSVC)
     # The torch 2.4 headers need standards conformance and (with their template
-    # volume) object sections beyond the COFF default.
+    # volume) object sections beyond the COFF default. They also pull in
+    # windows.h, whose min/max macros would mangle every std::min/std::max —
+    # NOMINMAX suppresses them.
     add_compile_options(/permissive- /EHsc /bigobj)
+    add_compile_definitions(NOMINMAX WIN32_LEAN_AND_MEAN)
 endif()
 
 # --- r8brain static lib ----------------------------------------------------------------
