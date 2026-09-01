@@ -54,18 +54,34 @@ else()
 endif()
 
 # --- libtorch (downloaded into libs/libtorch; gitignored) ------------------------------
+# Same torch version (2.4.1, CPU) on every platform so TorchScript models never
+# need per-platform re-exports. Each platform has its own archive and layout;
+# both are normalized behind TORCH_CMAKE_DIR / TORCH_LIB_DIR below.
 set(LIBTORCH_DIR "${CMAKE_CURRENT_SOURCE_DIR}/libs/libtorch")
-set(LIBTORCH_PYTHON_VERSION "3.12")
-set(LIBTORCH_URL "https://anaconda.org/pytorch/pytorch/2.4.1/download/osx-arm64/pytorch-2.4.1-py3.12_0.tar.bz2")
+if(WIN32)
+    # Official MSVC CPU build. The zip carries a top-level libtorch/ directory.
+    set(LIBTORCH_URL "https://download.pytorch.org/libtorch/cpu/libtorch-win-shared-with-deps-2.4.1%2Bcpu.zip")
+    set(_libtorch_archive "${CMAKE_BINARY_DIR}/libtorch-download.zip")
+    set(TORCH_CMAKE_DIR "${LIBTORCH_DIR}/libtorch/share/cmake")
+    set(TORCH_LIB_DIR   "${LIBTORCH_DIR}/libtorch/lib")
+else()
+    # Anaconda build (osx-arm64): as of 2.4.1, ~20x faster on CPU than the
+    # pytorch.org macOS binaries. Extracts straight to bin/ info/ lib/.
+    set(LIBTORCH_PYTHON_VERSION "3.12")
+    set(LIBTORCH_URL "https://anaconda.org/pytorch/pytorch/2.4.1/download/osx-arm64/pytorch-2.4.1-py3.12_0.tar.bz2")
+    set(_libtorch_archive "${CMAKE_BINARY_DIR}/libtorch-download.tar.bz2")
+    set(TORCH_CMAKE_DIR "${LIBTORCH_DIR}/lib/python${LIBTORCH_PYTHON_VERSION}/site-packages/torch/share/cmake")
+    set(TORCH_LIB_DIR   "${LIBTORCH_DIR}/lib/python${LIBTORCH_PYTHON_VERSION}/site-packages/torch/lib")
+endif()
 
 # Plain download+extract (not FetchContent) gated solely on the extracted dir
 # existing. FetchContent stores its "populated" stamps under build/ while the
 # payload lives in libs/ — so `rm -rf libs` without `rm -rf build` would leave a
 # stale stamp and an empty libs/libtorch. Keying purely on EXISTS makes this
 # self-healing: if the payload is gone, it is re-fetched regardless of build/.
-if(NOT EXISTS "${LIBTORCH_DIR}/lib")
+if(NOT EXISTS "${TORCH_LIB_DIR}")
     message(STATUS "libtorch not found at ${LIBTORCH_DIR} — downloading")
-    set(_libtorch_tarball "${CMAKE_BINARY_DIR}/libtorch-download.tar.bz2")
+    set(_libtorch_tarball "${_libtorch_archive}")
     file(DOWNLOAD "${LIBTORCH_URL}" "${_libtorch_tarball}"
         SHOW_PROGRESS STATUS _libtorch_dl_status)
     list(GET _libtorch_dl_status 0 _libtorch_dl_code)
@@ -82,11 +98,15 @@ else()
     message(STATUS "libtorch found locally at ${LIBTORCH_DIR}")
 endif()
 
-set(TORCH_CMAKE_DIR "${LIBTORCH_DIR}/lib/python${LIBTORCH_PYTHON_VERSION}/site-packages/torch/share/cmake")
-set(TORCH_LIB_DIR   "${LIBTORCH_DIR}/lib/python${LIBTORCH_PYTHON_VERSION}/site-packages/torch/lib")
 list(APPEND CMAKE_PREFIX_PATH "${TORCH_CMAKE_DIR}")
 find_package(Torch REQUIRED)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${TORCH_CXX_FLAGS}")
+
+if(MSVC)
+    # The torch 2.4 headers need standards conformance and (with their template
+    # volume) object sections beyond the COFF default.
+    add_compile_options(/permissive- /EHsc /bigobj)
+endif()
 
 # --- r8brain static lib ----------------------------------------------------------------
 # Built inline (not via add_subdirectory) so the only thing that needs to exist under
@@ -111,20 +131,41 @@ target_link_libraries(ipt_core INTERFACE r8brain "${TORCH_LIBRARIES}")
 # --------------------------------------------------------------------------------------
 add_library(ipt_api SHARED src/ipt.cpp)
 set_target_properties(ipt_api PROPERTIES
-    OUTPUT_NAME ipt          # produces libipt.dylib
-    # For the in-tree build, find libtorch at its absolute location so build/example
-    # runs without an install step. For the installed copy, look right next to
-    # libipt.dylib (@loader_path) — the bundled torch dylibs are copied alongside it.
-    BUILD_RPATH   "${TORCH_LIB_DIR}"
-    INSTALL_RPATH "@loader_path")
+    OUTPUT_NAME ipt)         # produces libipt.dylib / ipt.dll (+ ipt.lib import lib)
+# IPT_BUILD switches ipt.h's IPT_API macro to dllexport while building the DLL.
+target_compile_definitions(ipt_api PRIVATE IPT_BUILD)
+if(APPLE)
+    set_target_properties(ipt_api PROPERTIES
+        # For the in-tree build, find libtorch at its absolute location so build/example
+        # runs without an install step. For the installed copy, look right next to
+        # libipt.dylib (@loader_path) — the bundled torch dylibs are copied alongside it.
+        BUILD_RPATH   "${TORCH_LIB_DIR}"
+        INSTALL_RPATH "@loader_path")
+endif()
 target_include_directories(ipt_api PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
 target_link_libraries(ipt_api PRIVATE ipt_core)
+
+# The torch runtime DLL closure (Windows has no rpath: DLLs are found by sitting
+# in the loading executable's directory). The *_jni.dll pair is Java-binding
+# dead weight — never loaded by the C++ runtime, so don't ship it.
+if(WIN32)
+    file(GLOB IPT_TORCH_RUNTIME_DLLS "${TORCH_LIB_DIR}/*.dll")
+    list(FILTER IPT_TORCH_RUNTIME_DLLS EXCLUDE REGEX "jni")
+endif()
 
 # --------------------------------------------------------------------------------------
 # Example consumer — plain C, demonstrates reuse with zero C++/torch knowledge
 # --------------------------------------------------------------------------------------
 add_executable(example examples/example.c)
 target_link_libraries(example PRIVATE ipt_api)
+
+# On Windows the build-tree example finds ipt.dll in its own output directory
+# already; the torch DLLs must be copied beside it (no rpath mechanism).
+if(WIN32)
+    add_custom_command(TARGET example POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                ${IPT_TORCH_RUNTIME_DLLS} "$<TARGET_FILE_DIR:example>")
+endif()
 
 # --------------------------------------------------------------------------------------
 # install / dist — a self-contained, relocatable bundle for external consumers:
@@ -145,15 +186,26 @@ if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
     set(CMAKE_INSTALL_PREFIX "${CMAKE_SOURCE_DIR}/dist" CACHE PATH "libipt dist prefix" FORCE)
 endif()
 
-# Public header + the C ABI shared library.
+# Public header + the C ABI shared library. On Windows RUNTIME is ipt.dll and
+# ARCHIVE its ipt.lib import library; on macOS LIBRARY is libipt.dylib. All in
+# lib/ so the whole folder stays relocatable as one unit.
 install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/include/ipt.h" DESTINATION include)
-install(TARGETS ipt_api LIBRARY DESTINATION lib)
+install(TARGETS ipt_api
+    RUNTIME DESTINATION lib
+    LIBRARY DESTINATION lib
+    ARCHIVE DESTINATION lib)
 
-# The libtorch runtime closure libipt links against (CPU build: no libomp — uses
-# Accelerate). These already reference each other via @rpath/@loader_path, so
-# co-locating them in lib/ is enough.
-install(FILES
-    "${TORCH_LIB_DIR}/libtorch.dylib"
-    "${TORCH_LIB_DIR}/libtorch_cpu.dylib"
-    "${TORCH_LIB_DIR}/libc10.dylib"
-    DESTINATION lib)
+if(WIN32)
+    # The torch runtime DLL closure (globbed above). DLLs resolve each other by
+    # co-location, so lib/ next to ipt.dll is enough.
+    install(FILES ${IPT_TORCH_RUNTIME_DLLS} DESTINATION lib)
+else()
+    # The libtorch runtime closure libipt links against (CPU build: no libomp — uses
+    # Accelerate). These already reference each other via @rpath/@loader_path, so
+    # co-locating them in lib/ is enough.
+    install(FILES
+        "${TORCH_LIB_DIR}/libtorch.dylib"
+        "${TORCH_LIB_DIR}/libtorch_cpu.dylib"
+        "${TORCH_LIB_DIR}/libc10.dylib"
+        DESTINATION lib)
+endif()
