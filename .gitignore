@@ -1,6 +1,6 @@
 build/
 dist/
-libs/libtorch/
+libs/libtorch
 *.dylib
 *.o
 *.a
