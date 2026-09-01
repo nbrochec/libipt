@@ -161,6 +161,10 @@ endif()
 # --------------------------------------------------------------------------------------
 add_executable(example examples/example.c)
 target_link_libraries(example PRIVATE ipt_api)
+if(MSVC)
+    # MSVC's math.h only defines M_PI behind this.
+    target_compile_definitions(example PRIVATE _USE_MATH_DEFINES)
+endif()
 
 # On Windows the build-tree example finds ipt.dll in its own output directory
 # already; the torch DLLs must be copied beside it (no rpath mechanism).
