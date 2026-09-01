@@ -156,6 +156,16 @@ if(WIN32)
     list(FILTER IPT_TORCH_RUNTIME_DLLS EXCLUDE REGEX "jni")
 endif()
 
+# When built via add_subdirectory (e.g. from ipt_tilde), hand the parent the
+# torch runtime locations so it can bundle the closure without duplicating any
+# knowledge of the per-platform libtorch layout.
+if(NOT CMAKE_CURRENT_SOURCE_DIR STREQUAL CMAKE_SOURCE_DIR)
+    set(IPT_TORCH_LIB_DIR "${TORCH_LIB_DIR}" PARENT_SCOPE)
+    if(WIN32)
+        set(IPT_TORCH_RUNTIME_DLLS "${IPT_TORCH_RUNTIME_DLLS}" PARENT_SCOPE)
+    endif()
+endif()
+
 # --------------------------------------------------------------------------------------
 # Example consumer — plain C, demonstrates reuse with zero C++/torch knowledge
 # --------------------------------------------------------------------------------------
