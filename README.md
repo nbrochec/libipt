@@ -1,10 +1,10 @@
 # libipt
 
-[![CI](https://github.com/nbrochec/libipt/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/nbrochec/libipt/actions/workflows/ci.yml)
+[![CI](https://github.com/nbrochec/libipt/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/nbrochec/libipt/actions/workflows/ci.yml)
 
 A C API for real-time **Instrumental Playing Technique (IPT)** classification.
 
-**Disclaimer: Part of this code was written with Claude Opus 4.8.**
+**Disclaimer: Part of this code was written with Claude Opus 4.8 and Claude Fable 5.**
 Claude code was utilized for faster implementation of the API. The code has been reviewed and validated by a human before making it available online.
 
 `libipt` is a self-contained C library for IPT classification. It **owns** the
@@ -32,11 +32,12 @@ libipt/
 
 ## Requirements
 
-- macOS, Apple Silicon (arm64)
+- macOS Apple Silicon (arm64), or Windows x64 (Visual Studio 2022+)
 - CMake ≥ 3.19
 - No external checkout needed — libipt is self-contained. r8brain is vendored;
-  libtorch (2.4.1) is downloaded into `libs/libtorch` automatically on first
-  configure if absent.
+  libtorch (2.4.1, CPU — the same version on every platform, so TorchScript
+  models are interchangeable) is downloaded into `libs/libtorch` automatically
+  on first configure if absent.
 
 ## Build
 
@@ -51,6 +52,17 @@ Produces `build/libipt.dylib` and the `build/example` demo.
 ```bash
 ./build/example /path/to/model.ts
 ```
+
+On Windows (multi-config MSVC generator):
+
+```bat
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --config Release -j 8
+```
+
+Produces `build/Release/ipt.dll` (with its `ipt.lib` import library) and
+`build/Release/example.exe`; the torch DLLs it needs are copied beside the
+example automatically.
 
 ## Using it in another project
 
@@ -76,9 +88,11 @@ ipt_destroy(clf);
 
 ### Runtime note
 
-`libipt.dylib` depends on the libtorch dylibs. The build bakes an rpath to
-libipt's own `libs/libtorch` so the example runs in place — but that path is
-specific to your machine. To **ship** libipt elsewhere, use the install step below.
+`libipt` depends on the libtorch runtime libraries. On macOS the build bakes an
+rpath to libipt's own `libs/libtorch` so the example runs in place — but that
+path is specific to your machine. On Windows there is no rpath: the DLLs simply
+have to sit next to the executable (the build copies them there for the
+example). To **ship** libipt elsewhere, use the install step below.
 
 ## Distributing (self-contained bundle)
 
@@ -99,15 +113,21 @@ dist/
     └── libc10.dylib
 ```
 
+On Windows the same step gathers `lib/ipt.dll`, its `ipt.lib` import library,
+and the torch DLL closure (`torch.dll`, `torch_cpu.dll`, `c10.dll`,
+`fbgemm.dll`, `asmjit.dll`, `libiomp5md.dll`, `uv.dll`, …) into `lib/`.
+
 `libipt.dylib` finds the torch dylibs sitting next to it (`@loader_path`), so the
-whole `lib/` folder works wherever it's copied. A
-consumer builds against it and adds an rpath to the bundle's `lib/`:
+whole `lib/` folder works wherever it's copied; on Windows, DLLs resolve each
+other by co-location the same way. A consumer builds against it and, on macOS,
+adds an rpath to the bundle's `lib/`:
 
 ```bash
 gcc myapp.c -Idist/include -Ldist/lib -lipt -Wl,-rpath,/path/to/dist/lib
 ```
 
-(Or just place the binary inside `dist/lib/`.) Note: the default `dist` prefix
+(Or just place the binary inside `dist/lib/` — on Windows that co-location IS
+the mechanism.) Note: the default `dist` prefix
 only applies on a build tree already configured with
 another prefix, pass `--prefix` explicitly.
 
