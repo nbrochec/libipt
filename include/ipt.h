@@ -75,6 +75,22 @@ IPT_API ipt_classifier* ipt_create(const char* model_path,
 IPT_API void ipt_destroy(ipt_classifier* h);
 
 /*
+ * Number of intra-op threads torch uses for the forward pass.
+ *
+ * Process-global (torch has one thread pool per process) and only effective if
+ * called BEFORE the first ipt_initialize_model() in the process: torch creates
+ * the pool lazily and ignores later changes. n <= 0 keeps torch's default (one
+ * thread per core). The right value depends on the model and on what else runs
+ * on the machine: fewer threads cost some forward latency but free whole cores
+ * (measured on an M4 Pro, flute model: 1 thread 4.3 ms / 100 % CPU, 4 threads
+ * 3.0 ms / 190 %, default 10 threads 3.1 ms / 267 %).
+ */
+IPT_API void ipt_set_num_threads(int n);
+
+/* Current intra-op thread count as reported by torch. */
+IPT_API int ipt_get_num_threads(void);
+
+/*
  * Load the TorchScript model and parse its embedded metadata (sample rate,
  * segment length, class names). Must run on the same thread as ipt_process().
  * Returns IPT_OK or IPT_ERR_TORCH (see ipt_last_error).

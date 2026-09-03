@@ -66,7 +66,10 @@ public:
 
 
     void resize(int ms, int sr) {
-        m_buffer.resize(util::mstosamples(ms, sr));
+        // delegate so the write index / allocation flag are re-validated: a bare
+        // m_buffer.resize() to a smaller size left m_write_index past the end and
+        // the next add_samples() wrote out of bounds.
+        resize(util::mstosamples(ms, sr));
     }
 
 
