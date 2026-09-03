@@ -86,6 +86,19 @@ ipt_destroy(clf);
 
 `gcc myapp.c -I/path/to/libipt/include -L/path/to/libipt/build -lipt`
 
+### Threads
+
+torch runs the forward pass on an intra-op thread pool sized to the machine's
+cores by default. `ipt_set_num_threads(n)` lets a host pick a smaller pool
+(process-global; call it **before** the first `ipt_initialize_model()` in the
+process, torch ignores later changes). The trade-off is latency against cores
+left free for the host, e.g. flute model on an M4 Pro: 1 thread 4.3 ms / 100 %
+CPU, 4 threads 3.0 ms / 190 %, default 10 threads 3.1 ms / 267 %. There is no
+single right value, so the default is left to torch and hosts expose the knob.
+
+Models are also frozen (`torch::jit::freeze`) at load and run under
+`c10::InferenceMode`, which is 10-22 % faster than the plain eval module.
+
 ### Runtime note
 
 `libipt` depends on the libtorch runtime libraries. On macOS the build bakes an

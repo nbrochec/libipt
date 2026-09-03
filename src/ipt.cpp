@@ -7,6 +7,7 @@
  */
 #include "ipt.h"
 
+#include <atomic>
 #include <chrono>
 #include <cstring>
 #include <optional>
@@ -32,6 +33,9 @@ struct ipt_classifier {
 namespace {
 
 thread_local std::string g_last_error = "";
+
+// requested intra-op thread count (0 = torch default), applied at model load
+std::atomic<int> g_num_threads{0};
 
 torch::DeviceType to_device(ipt_device d) {
     switch (d) {
@@ -69,7 +73,7 @@ void ipt_destroy(ipt_classifier* h) {
 int ipt_initialize_model(ipt_classifier* h) {
     if (!h) { g_last_error = "ipt_initialize_model: handle is null"; return IPT_ERR_NULL; }
     try {
-        h->classifier.initialize_model();
+        h->classifier.initialize_model(g_num_threads.load());
         if (auto names = h->classifier.get_class_names()) {
             h->class_names = std::move(*names);
         }
@@ -78,6 +82,14 @@ int ipt_initialize_model(ipt_classifier* h) {
         g_last_error = e.what();
         return IPT_ERR_TORCH;
     }
+}
+
+void ipt_set_num_threads(int n) {
+    g_num_threads.store(n < 0 ? 0 : n);
+}
+
+int ipt_get_num_threads(void) {
+    return at::get_num_threads();
 }
 
 int ipt_init_buffers(ipt_classifier* h, int sample_rate, int input_vector_length) {

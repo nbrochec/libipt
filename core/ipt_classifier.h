@@ -29,9 +29,9 @@ public:
      * @note Make sure to call this on the thread that will call `process()`
      * @throws c10::Error if model cannot be loaded
      * */
-    void initialize_model() {
+    void initialize_model(int num_threads = 0) {
         std::lock_guard lock{m_mutex};
-        m_model = std::make_unique<Model>(m_model_path, m_device);
+        m_model = std::make_unique<Model>(m_model_path, m_device, num_threads);
 
         m_initialized = is_initialized();
     }
