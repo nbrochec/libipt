@@ -58,9 +58,13 @@ endif()
 # need per-platform re-exports. Each platform has its own archive and layout;
 # both are normalized behind TORCH_CMAKE_DIR / TORCH_LIB_DIR below.
 set(LIBTORCH_DIR "${CMAKE_CURRENT_SOURCE_DIR}/libs/libtorch")
+# LIBTORCH_SHA256 pins the exact archive bytes: it turns a truncated or
+# tampered transfer into a clear configure-time failure instead of a torch tree
+# that is subtly broken at link or run time. Bump it together with the URL.
 if(WIN32)
     # Official MSVC CPU build. The zip carries a top-level libtorch/ directory.
     set(LIBTORCH_URL "https://download.pytorch.org/libtorch/cpu/libtorch-win-shared-with-deps-2.4.1%2Bcpu.zip")
+    set(LIBTORCH_SHA256 "e7b8d0b3b958d2215f52ff5385335f93aa78e42005727e44f1043d94d5bfc5dd")
     set(_libtorch_archive "${CMAKE_BINARY_DIR}/libtorch-download.zip")
     set(TORCH_CMAKE_DIR "${LIBTORCH_DIR}/libtorch/share/cmake")
     set(TORCH_LIB_DIR   "${LIBTORCH_DIR}/libtorch/lib")
@@ -69,6 +73,7 @@ else()
     # pytorch.org macOS binaries. Extracts straight to bin/ info/ lib/.
     set(LIBTORCH_PYTHON_VERSION "3.12")
     set(LIBTORCH_URL "https://anaconda.org/pytorch/pytorch/2.4.1/download/osx-arm64/pytorch-2.4.1-py3.12_0.tar.bz2")
+    set(LIBTORCH_SHA256 "01d3baf6ce6c93b0ec888e2792d2a427e1ac38301b085275fd3bb0c2ef0b6ef5")
     set(_libtorch_archive "${CMAKE_BINARY_DIR}/libtorch-download.tar.bz2")
     set(TORCH_CMAKE_DIR "${LIBTORCH_DIR}/lib/python${LIBTORCH_PYTHON_VERSION}/site-packages/torch/share/cmake")
     set(TORCH_LIB_DIR   "${LIBTORCH_DIR}/lib/python${LIBTORCH_PYTHON_VERSION}/site-packages/torch/lib")
@@ -81,19 +86,61 @@ endif()
 # self-healing: if the payload is gone, it is re-fetched regardless of build/.
 if(NOT EXISTS "${TORCH_LIB_DIR}")
     message(STATUS "libtorch not found at ${LIBTORCH_DIR} — downloading")
-    set(_libtorch_tarball "${_libtorch_archive}")
-    file(DOWNLOAD "${LIBTORCH_URL}" "${_libtorch_tarball}"
-        SHOW_PROGRESS STATUS _libtorch_dl_status)
-    list(GET _libtorch_dl_status 0 _libtorch_dl_code)
-    if(NOT _libtorch_dl_code EQUAL 0)
+
+    # A single attempt makes configure a coin toss on the CDN: a transient hiccup
+    # ("HTTP response code said error", seen on GitHub Actions at 0 %) aborts the
+    # whole build. Retry a few times, and treat a checksum mismatch exactly like a
+    # failed transfer — a partial archive is worth retrying, not extracting.
+    # EXPECTED_HASH is deliberately not used: it hard-errors inside file(DOWNLOAD),
+    # which would abort before the next attempt.
+    set(_libtorch_attempts 3)
+    set(_libtorch_ok FALSE)
+
+    foreach(_libtorch_try RANGE 1 ${_libtorch_attempts})
+        message(STATUS "libtorch: downloading (attempt ${_libtorch_try}/${_libtorch_attempts})")
+        file(DOWNLOAD "${LIBTORCH_URL}" "${_libtorch_archive}"
+            SHOW_PROGRESS
+            INACTIVITY_TIMEOUT 120   # fail a stalled transfer instead of hanging CI
+            TLS_VERIFY ON
+            STATUS _libtorch_dl_status)
+        list(GET _libtorch_dl_status 0 _libtorch_dl_code)
         list(GET _libtorch_dl_status 1 _libtorch_dl_msg)
-        file(REMOVE "${_libtorch_tarball}")
-        message(FATAL_ERROR "libtorch download failed: ${_libtorch_dl_msg}")
+
+        if(NOT _libtorch_dl_code EQUAL 0)
+            message(STATUS "libtorch: download failed: ${_libtorch_dl_msg}")
+        else()
+            file(SHA256 "${_libtorch_archive}" _libtorch_got_sha)
+            if(_libtorch_got_sha STREQUAL "${LIBTORCH_SHA256}")
+                set(_libtorch_ok TRUE)
+                break()
+            endif()
+            message(STATUS "libtorch: checksum mismatch "
+                           "(expected ${LIBTORCH_SHA256}, got ${_libtorch_got_sha})")
+        endif()
+
+        file(REMOVE "${_libtorch_archive}")   # never retry on top of a partial file
+    endforeach()
+
+    if(NOT _libtorch_ok)
+        message(FATAL_ERROR
+            "libtorch download failed after ${_libtorch_attempts} attempts.\n"
+            "  URL: ${LIBTORCH_URL}\n"
+            "  If the network is fine, the published archive may have been "
+            "replaced — verify it and update LIBTORCH_SHA256.")
     endif()
+
     # The conda tarball extracts straight to bin/ info/ lib/ (no top-level dir).
     file(MAKE_DIRECTORY "${LIBTORCH_DIR}")
-    file(ARCHIVE_EXTRACT INPUT "${_libtorch_tarball}" DESTINATION "${LIBTORCH_DIR}")
-    file(REMOVE "${_libtorch_tarball}")
+    file(ARCHIVE_EXTRACT INPUT "${_libtorch_archive}" DESTINATION "${LIBTORCH_DIR}")
+    file(REMOVE "${_libtorch_archive}")
+
+    # Guard against a verified archive whose internal layout moved: without this
+    # the error would surface much later as a confusing find_package(Torch) miss.
+    if(NOT EXISTS "${TORCH_LIB_DIR}")
+        message(FATAL_ERROR
+            "libtorch extracted but ${TORCH_LIB_DIR} is missing — the archive "
+            "layout changed; update TORCH_CMAKE_DIR / TORCH_LIB_DIR.")
+    endif()
 else()
     message(STATUS "libtorch found locally at ${LIBTORCH_DIR}")
 endif()

@@ -12,6 +12,14 @@ on:
     branches: [main, dev]
   pull_request:
   workflow_dispatch:        # lets you run it by hand from the Actions tab
+  # The libtorch cache uses a fixed key, and GitHub evicts entries that have not
+  # been read for 7 days — so a quiet week guarantees a cold cache and a fresh
+  # download on the next push, which is precisely when a CDN hiccup can fail
+  # configure. These runs keep the entry warm (a cache hit counts as a read).
+  # They fire on the default branch, so what stays warm is the main-scoped copy;
+  # branch runs fall back to it once their own copy is gone.
+  schedule:
+    - cron: "0 5 * * 1,4"   # Mon & Thu, 05:00 UTC — well inside the 7-day window
 
 permissions:
   contents: read
