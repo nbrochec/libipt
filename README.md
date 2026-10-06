@@ -144,6 +144,39 @@ the mechanism.) Note: the default `dist` prefix
 only applies on a build tree already configured with
 another prefix, pass `--prefix` explicitly.
 
+## Models
+
+libipt loads TorchScript (`.ts`) models that implement the contract it expects:
+`forward`, `get_sr`, `get_seglen` and `get_classnames`. Pretrained
+playing-technique models live in a separate repository,
+[DYCI2/ipt_models](https://github.com/DYCI2/ipt_models), and are hosted on
+Hugging Face ([nbrochec/ipt_models](https://huggingface.co/nbrochec/ipt_models)):
+
+| Model | Instrument | Classes | Sample rate | Latency floor |
+|---|---|---|---|---|
+| [`eguitar_ircam.ts`](https://huggingface.co/nbrochec/ipt_models/resolve/main/eguitar_ircam.ts) | Electric guitar | 14 | 8 kHz | 896 ms |
+| [`flute_ircam.ts`](https://huggingface.co/nbrochec/ipt_models/resolve/main/flute_ircam.ts) | Flute | 11 | 44.1 kHz | 333 ms |
+| [`trumpet_ircam.ts`](https://huggingface.co/nbrochec/ipt_models/resolve/main/trumpet_ircam.ts) | Trumpet | 14 | 44.1 kHz | 333 ms |
+| [`trumpet_harmon_ircam.ts`](https://huggingface.co/nbrochec/ipt_models/resolve/main/trumpet_harmon_ircam.ts) | Trumpet, harmon mute | 14 | 44.1 kHz | 333 ms |
+
+The *latency floor* is the model's segment length: libipt cannot emit a
+classification before it has buffered that much audio. The model's sample rate
+is the model's own, not yours — libipt resamples whatever rate you pass to
+`ipt_init_buffers()` to it, so any host sample rate works.
+
+One [model card](https://github.com/DYCI2/ipt_models/tree/main/cards) per model
+lists the classes in output order (the index order of `out_dist` in
+`ipt_process()`), the architecture and front-end, the measured forward-pass
+time, and a SHA-256. Models are exported with
+[ipt_recognition](https://github.com/nbrochec/ipt_recognition) and load with
+torch 2.4.1 — the same version libipt links on every platform, so a `.ts` file
+is interchangeable across macOS and Windows.
+
+```bash
+hf download nbrochec/ipt_models flute_ircam.ts --local-dir .
+./build/example flute_ircam.ts
+```
+
 ## Testing
 
 [`tests/dummy.ts`](tests/dummy.ts) is a tiny TorchScript model committed for
